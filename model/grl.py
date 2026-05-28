@@ -29,11 +29,12 @@ class GradientReversalLayer(nn.Module):
 
 
 class InstrumentClassifier(nn.Module):
-    """Temporal pooling → 2-layer MLP → instrument logits."""
+    """Temporal pooling → LayerNorm → 2-layer MLP → instrument logits."""
 
     def __init__(self, d_z: int, n_instruments: int, hidden_dim: int = 256):
         super().__init__()
         self.grl = GradientReversalLayer()
+        self.norm = nn.LayerNorm(d_z)
         self.mlp = nn.Sequential(
             nn.Linear(d_z, hidden_dim),
             nn.ReLU(),
@@ -52,4 +53,5 @@ class InstrumentClassifier(nn.Module):
             self.grl.set_lambda(lambda_)
         x = self.grl(z)
         x = x.mean(dim=1)       # temporal mean pooling → [Batch, D_z]
+        x = self.norm(x)        # prevent logit explosion during adversarial training
         return self.mlp(x)

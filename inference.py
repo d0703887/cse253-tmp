@@ -13,10 +13,12 @@ import argparse
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 import torchaudio
 
 from config import ModelConfig
-from dataset import NSynthDataset
+from dataset import compute_loudness
+from losses import MultiScaleSpectrogramLoss
 from model import TimbreTransferModel
 
 
@@ -32,31 +34,48 @@ def load_audio(path: str, sample_rate: int, audio_length: int) -> torch.Tensor:
     return waveform
 
 
-def extract_features(waveform: torch.Tensor, dataset: NSynthDataset) -> dict:
-    n_frames = dataset.audio_length // dataset.hop
+def extract_features(waveform: torch.Tensor, cfg: ModelConfig) -> dict:
+    """Extract MFCC, f0 (CREPE), and loudness — identical pipeline to preprocess.py."""
     import torchaudio.transforms as T
+    import torchcrepe
+
+    hop = cfg.audio_length // cfg.frame_rate
+    n_frames = cfg.audio_length // hop
+
     mfcc_transform = T.MFCC(
-        sample_rate=dataset.sample_rate,
-        n_mfcc=dataset.n_mfcc,
+        sample_rate=cfg.sample_rate,
+        n_mfcc=cfg.n_mfcc,
         melkwargs={
-            "n_fft": dataset.hop * 4,    # 1024
-            "hop_length": dataset.hop,   # 256
+            "n_fft": hop * 4,
+            "hop_length": hop,
             "n_mels": 128,
             "f_min": 20.0,
-            "f_max": dataset.sample_rate / 2.0,
+            "f_max": cfg.sample_rate / 2.0,
         },
     )
     mfcc = mfcc_transform(waveform)[:, :n_frames]
     if mfcc.shape[1] < n_frames:
-        mfcc = torch.nn.functional.pad(mfcc, (0, n_frames - mfcc.shape[1]))
-    mfcc = mfcc.T
+        mfcc = F.pad(mfcc, (0, n_frames - mfcc.shape[1]))
+    mfcc = mfcc.T  # [T, n_mfcc]
 
-    from dataset import compute_loudness
-    loudness = compute_loudness(waveform, dataset.sample_rate, dataset.hop)[:n_frames]
+    loudness = compute_loudness(waveform, cfg.sample_rate, hop)[:n_frames]
     if loudness.shape[0] < n_frames:
-        loudness = torch.nn.functional.pad(loudness, (0, 0, 0, n_frames - loudness.shape[0]))
+        loudness = F.pad(loudness, (0, 0, 0, n_frames - loudness.shape[0]))
 
-    f0 = dataset._autocorr_f0(waveform, n_frames)
+    f0, _ = torchcrepe.predict(
+        waveform.unsqueeze(0),
+        cfg.sample_rate,
+        hop_length=hop,
+        fmin=50.0,
+        fmax=2000.0,
+        model="tiny",
+        return_periodicity=True,
+        decoder=torchcrepe.decode.viterbi,
+    )
+    f0 = f0.squeeze(0)[:n_frames]
+    if f0.shape[0] < n_frames:
+        f0 = F.pad(f0, (0, n_frames - f0.shape[0]))
+    f0 = f0.unsqueeze(-1)  # [T, 1]
 
     return {"mfcc": mfcc, "f0": f0, "loudness": loudness}
 
@@ -74,17 +93,10 @@ def transfer(args):
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    dummy_dataset = NSynthDataset.__new__(NSynthDataset)
-    dummy_dataset.sample_rate = model_cfg.sample_rate
-    dummy_dataset.audio_length = model_cfg.audio_length
-    dummy_dataset.frame_rate = model_cfg.frame_rate
-    dummy_dataset.n_mfcc = model_cfg.n_mfcc
-    dummy_dataset.hop = model_cfg.audio_length // model_cfg.frame_rate
-
     src_wav = load_audio(args.source, model_cfg.sample_rate, model_cfg.audio_length)
-    src_feats = extract_features(src_wav, dummy_dataset)
+    src_feats = extract_features(src_wav, model_cfg)
 
-    def to_batch(t):
+    def to_batch(t: torch.Tensor) -> torch.Tensor:
         return t.unsqueeze(0).to(device)
 
     if args.mode == "reconstruct":
@@ -94,21 +106,40 @@ def transfer(args):
             to_batch(src_feats["loudness"]),
             grl_lambda=0.0,
         )
-        output_audio = outputs["audio"]  # [1, audio_length]
+        output_audio = outputs["audio"].squeeze(0).cpu()  # [audio_length]
+
+        # ── evaluation metrics ────────────────────────────────────────────────
+        print("\n── Reconstruction metrics ──")
+
+        # Multi-scale spectral loss (same config as training)
+        mss = MultiScaleSpectrogramLoss(fft_sizes=model_cfg.fft_sizes, overlap=model_cfg.overlap)
+        spectral_loss = mss(src_wav.unsqueeze(0), output_audio.unsqueeze(0)).item()
+        print(f"  Multi-scale spectral loss : {spectral_loss:.4f}")
+
+        # f0 and loudness of the reconstructed audio
+        print("  Extracting features from reconstructed audio (CREPE)...")
+        recon_feats = extract_features(output_audio, model_cfg)
+
+        f0_l1 = F.l1_loss(recon_feats["f0"], src_feats["f0"]).item()
+        loudness_l1 = F.l1_loss(recon_feats["loudness"], src_feats["loudness"]).item()
+        print(f"  f0 L1                     : {f0_l1:.4f} Hz")
+        print(f"  Loudness L1               : {loudness_l1:.4f} dB")
+        print()
+        # ─────────────────────────────────────────────────────────────────────
+
     else:
         if args.target is None:
             raise ValueError("--target is required for transfer mode")
         tgt_wav = load_audio(args.target, model_cfg.sample_rate, model_cfg.audio_length)
-        tgt_feats = extract_features(tgt_wav, dummy_dataset)
+        tgt_feats = extract_features(tgt_wav, model_cfg)
         output_audio = model.transfer(
             source_mfcc=to_batch(src_feats["mfcc"]),
             source_f0=to_batch(src_feats["f0"]),
             source_loudness=to_batch(src_feats["loudness"]),
             target_mfcc=to_batch(tgt_feats["mfcc"]),
-        )  # [1, audio_length]
+        ).squeeze(0).cpu()  # [audio_length]
 
-    output_audio = output_audio.squeeze(0).cpu()
-    output_audio = output_audio / (output_audio.abs().max() + 1e-8)   # peak normalise
+    output_audio = output_audio / (output_audio.abs().max() + 1e-8)  # peak normalise
     torchaudio.save(args.output, output_audio.unsqueeze(0), model_cfg.sample_rate)
     print(f"Saved: {args.output}")
 

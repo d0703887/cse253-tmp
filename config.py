@@ -26,7 +26,7 @@ class ModelConfig:
     timbre_d_t: int = 256              # D_t
 
     # GRL
-    grl_lambda_max: float = 0.1
+    grl_lambda_max: float = 1.0        # raised so encoder adversarial signal = lambda_max * grl_loss_weight = 0.1 (same as original)
     n_instruments: int = 11            # NSynth instrument families; overridden at runtime from dataset
 
     # Decoder MLP hidden dim
@@ -43,7 +43,7 @@ class ModelConfig:
 
     # Loss
     reconstruction_loss_weight: float = 1.0
-    grl_loss_weight: float = 1.0
+    grl_loss_weight: float = 0.1
 
     # Multi-scale spectrogram FFT sizes
     fft_sizes: tuple = (2048, 1024, 512, 256, 128, 64)
