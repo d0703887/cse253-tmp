@@ -106,7 +106,9 @@ def train(args):
     for epoch in epoch_bar:
         model.train()
         train_totals = {"total": 0.0, "reconstruction": 0.0, "classifier": 0.0}
+        train_correct = 0
         n_batches = 0
+        n_samples = 0
 
         batch_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", unit="batch", leave=False, position=0)
         for batch in batch_bar:
@@ -135,7 +137,9 @@ def train(args):
 
             for k in train_totals:
                 train_totals[k] += losses[k].item()
+            train_correct += (outputs["classifier_logits"].argmax(1) == instrument_labels).sum().item()
             n_batches += 1
+            n_samples += instrument_labels.size(0)
 
             if global_step % train_cfg.save_interval == 0:
                 ckpt_path = checkpoint_dir / f"step_{global_step:07d}.pt"
@@ -152,14 +156,17 @@ def train(args):
 
         # Epoch-end summary
         tr = {k: v / max(n_batches, 1) for k, v in train_totals.items()}
+        tr_acc = train_correct / max(n_samples, 1)
         summary = (
             f"Epoch {epoch+1:>3} | "
-            f"Train — loss: {tr['total']:.4f}  recon: {tr['reconstruction']:.4f}  cls: {tr['classifier']:.4f}"
+            f"Train — loss: {tr['total']:.4f}  recon: {tr['reconstruction']:.4f}  "
+            f"cls: {tr['classifier']:.4f}  cls_acc: {tr_acc:.2%}"
         )
         if val_loader is not None:
             val = _validate(model, criterion, val_loader, device, epoch)
             summary += (
-                f"  ||  Val — loss: {val['total']:.4f}  recon: {val['recon']:.4f}  cls: {val['classifier']:.4f}"
+                f"  ||  Val — loss: {val['total']:.4f}  recon: {val['recon']:.4f}  "
+                f"cls: {val['classifier']:.4f}  cls_acc: {val['cls_acc']:.2%}"
             )
         tqdm.write(summary)
 
@@ -170,8 +177,10 @@ def train(args):
 def _validate(model, criterion, val_loader, device, epoch) -> dict:
     model.eval()
     totals = {"total": 0.0, "reconstruction": 0.0, "classifier": 0.0}
-    n = 0
-    for batch in tqdm(val_loader, desc="Validation", unit="batch", leave=False):
+    correct = 0
+    n_batches = 0
+    n_samples = 0
+    for batch in tqdm(val_loader, desc="Validation", unit="batch", leave=False, position=0):
         audio = batch["audio"].to(device)
         mfcc = batch["mfcc"].to(device)
         f0 = batch["f0"].to(device)
@@ -186,10 +195,13 @@ def _validate(model, criterion, val_loader, device, epoch) -> dict:
         )
         for k in totals:
             totals[k] += losses[k].item()
-        n += 1
+        correct += (outputs["classifier_logits"].argmax(1) == instrument_labels).sum().item()
+        n_batches += 1
+        n_samples += instrument_labels.size(0)
 
-    metrics = {k: v / max(n, 1) for k, v in totals.items()}
+    metrics = {k: v / max(n_batches, 1) for k, v in totals.items()}
     metrics["recon"] = metrics.pop("reconstruction")
+    metrics["cls_acc"] = correct / max(n_samples, 1)
     return metrics
 
 
