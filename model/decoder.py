@@ -77,6 +77,11 @@ class DDSPDecoder(nn.Module):
         self.harmonic_head = nn.Linear(mlp_units, 1 + n_harmonics)
         self.noise_head = nn.Linear(mlp_units, n_noise_magnitudes)
 
+        # Start with small noise and larger harmonic amplitude so harmonics
+        # are audible from the first step rather than being buried under noise.
+        nn.init.constant_(self.noise_head.bias, -2.0)      # modified_sigmoid(-2) ≈ 0.016
+        nn.init.constant_(self.harmonic_head.bias[0], 2.0) # modified_sigmoid(+2) ≈ 1.5 → global_amp
+
     def forward(
         self,
         f0: torch.Tensor,           # [B, T, 1]
@@ -103,7 +108,11 @@ class DDSPDecoder(nn.Module):
         x = torch.cat([x, f0_emb, loud_emb], dim=-1)                # [B, T, skip_dim]
         x = self.pre_head_mlp(x)                                     # [B, T, mlp_units]
 
-        harmonic_params = modified_sigmoid(self.harmonic_head(x))    # [B, T, 101]
-        noise_params = modified_sigmoid(self.noise_head(x))          # [B, T, 65]
+        harmonic_raw = self.harmonic_head(x)                           # [B, T, 101]
+        harmonic_params = torch.cat([
+            modified_sigmoid(harmonic_raw[:, :, :1]),  # global amp:  (0, 2]
+            harmonic_raw[:, :, 1:],                    # harm dist:   raw logits → softmax in synthesizer
+        ], dim=-1)                                                     # [B, T, 101]
+        noise_params = modified_sigmoid(self.noise_head(x))           # [B, T, 65]
 
         return harmonic_params, noise_params
