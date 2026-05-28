@@ -108,7 +108,7 @@ def train(args):
         train_totals = {"total": 0.0, "reconstruction": 0.0, "classifier": 0.0}
         n_batches = 0
 
-        batch_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", unit="batch", leave=False)
+        batch_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", unit="batch", leave=False, position=0)
         for batch in batch_bar:
             audio = batch["audio"].to(device)
             mfcc = batch["mfcc"].to(device)
