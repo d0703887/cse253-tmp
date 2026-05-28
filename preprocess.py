@@ -27,7 +27,7 @@ from dataset import compute_loudness, _a_weighting
 
 def _process_one(args_tuple):
     (key, audio_path, cache_path, sample_rate, audio_length,
-     hop, n_mfcc, use_crepe) = args_tuple
+     hop, n_mfcc) = args_tuple
 
     if cache_path.exists():
         return key, "skip"
@@ -67,27 +67,21 @@ def _process_one(args_tuple):
             loudness = torch.nn.functional.pad(loudness, (0, 0, 0, n_frames - loudness.shape[0]))
 
         # f0
-        if use_crepe:
-            try:
-                import torchcrepe
-                f0, _ = torchcrepe.predict(
-                    waveform.unsqueeze(0),
-                    sample_rate,
-                    hop_length=hop,
-                    fmin=50.0,
-                    fmax=2000.0,
-                    model="tiny",
-                    return_periodicity=True,
-                    decoder=torchcrepe.decode.viterbi,
-                )
-                f0 = f0.squeeze(0)[:n_frames]
-                if f0.shape[0] < n_frames:
-                    f0 = torch.nn.functional.pad(f0, (0, n_frames - f0.shape[0]))
-                f0 = f0.unsqueeze(-1)
-            except ImportError:
-                f0 = _autocorr_f0(waveform, sample_rate, hop, n_frames)
-        else:
-            f0 = _autocorr_f0(waveform, sample_rate, hop, n_frames)
+        import torchcrepe
+        f0, _ = torchcrepe.predict(
+            waveform.unsqueeze(0),
+            sample_rate,
+            hop_length=hop,
+            fmin=50.0,
+            fmax=2000.0,
+            model="tiny",
+            return_periodicity=True,
+            decoder=torchcrepe.decode.viterbi,
+        )
+        f0 = f0.squeeze(0)[:n_frames]
+        if f0.shape[0] < n_frames:
+            f0 = torch.nn.functional.pad(f0, (0, n_frames - f0.shape[0]))
+        f0 = f0.unsqueeze(-1)
 
         torch.save({"mfcc": mfcc, "f0": f0, "loudness": loudness}, cache_path)
         return key, "ok"
@@ -135,11 +129,28 @@ def preprocess(args):
     model_cfg = ModelConfig()
     train_cfg = TrainConfig()
     families = set(args.families.split(",") if args.families else train_cfg.instrument_families)
+
+    # Parse optional per-family source filter, e.g. "bass:acoustic,guitar:acoustic,keyboard:electronic"
+    source_map: dict[str, str] = {}
+    if args.source_map:
+        for pair in args.source_map.split(","):
+            fam, src = pair.strip().split(":")
+            source_map[fam.strip()] = src.strip()
+
+    def _passes_source(v: dict) -> bool:
+        if not source_map:
+            return True
+        required = source_map.get(v["instrument_family_str"])
+        return required is None or v.get("instrument_source_str") == required
+
     examples = {
         k: v for k, v in examples.items()
-        if v["instrument_family_str"] in families and 24 < v["pitch"] < 84
+        if v["instrument_family_str"] in families
+        and 24 < v["pitch"] < 84
+        and _passes_source(v)
     }
-    print(f"Families: {families}, pitch 25–83 — {len(examples)} examples selected.")
+    src_info = f", sources: {source_map}" if source_map else ""
+    print(f"Families: {families}{src_info}, pitch 25–83 — {len(examples)} examples selected.")
 
     sample_rate = model_cfg.sample_rate
     audio_length = model_cfg.audio_length
@@ -151,7 +162,7 @@ def preprocess(args):
             key,
             data_dir / "audio" / f"{key}.wav",
             cache_dir / f"{key}.pt",
-            sample_rate, audio_length, hop, n_mfcc, args.use_crepe,
+            sample_rate, audio_length, hop, n_mfcc,
         )
         for key in examples
     ]
@@ -180,11 +191,14 @@ def preprocess(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True)
-    parser.add_argument("--use_crepe", action="store_true")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument(
         "--families", type=str, default=None,
         help="Comma-separated families to preprocess (overrides config.py)"
+    )
+    parser.add_argument(
+        "--source_map", type=str, default=None,
+        help='Per-family source filter, e.g. "bass:acoustic,guitar:acoustic,keyboard:electronic"'
     )
     args = parser.parse_args()
     preprocess(args)

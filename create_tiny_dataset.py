@@ -49,12 +49,15 @@ def copy_split(src_dir: Path, dst_dir: Path, train_cfg: TrainConfig):
 
     families = set(train_cfg.instrument_families)
 
-    # Step 1: filter by family and pitch
+    # Step 1: filter by family, source type, and pitch
+    source_map = train_cfg.instrument_source_map
     filtered = {
         k: v for k, v in examples.items()
-        if v["instrument_family_str"] in families and 24 < v["pitch"] < 84
+        if v["instrument_family_str"] in families
+        and 24 < v["pitch"] < 84
+        and v.get("instrument_source_str") == source_map.get(v["instrument_family_str"])
     }
-    print(f"\n{src_dir.name}: {len(examples)} total → {len(filtered)} after family+pitch filter")
+    print(f"\n{src_dir.name}: {len(examples)} total → {len(filtered)} after family+pitch+source filter")
 
     # Step 2: cap per family
     if train_cfg.max_per_family is not None:
@@ -103,6 +106,7 @@ def copy_split(src_dir: Path, dst_dir: Path, train_cfg: TrainConfig):
 def main():
     train_cfg = TrainConfig()
     print(f"Families: {train_cfg.instrument_families}")
+    print(f"Sources: {train_cfg.instrument_source_map}")
     print(f"Pitch range: 25–83")
     print(f"Cap: {train_cfg.max_per_family} per family (seed={train_cfg.dataset_seed})")
 

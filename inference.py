@@ -65,7 +65,7 @@ def extract_features(waveform: torch.Tensor, dataset: NSynthDataset) -> dict:
 def transfer(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ckpt = torch.load(args.checkpoint, map_location=device)
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model_cfg: ModelConfig = ckpt["model_cfg"]
     instrument_to_idx: dict = ckpt["instrument_to_idx"]
     model_cfg.n_instruments = len(instrument_to_idx)
@@ -79,23 +79,33 @@ def transfer(args):
     dummy_dataset.audio_length = model_cfg.audio_length
     dummy_dataset.frame_rate = model_cfg.frame_rate
     dummy_dataset.n_mfcc = model_cfg.n_mfcc
-    dummy_dataset.hop = model_cfg.sample_rate // model_cfg.frame_rate
+    dummy_dataset.hop = model_cfg.audio_length // model_cfg.frame_rate
 
     src_wav = load_audio(args.source, model_cfg.sample_rate, model_cfg.audio_length)
-    tgt_wav = load_audio(args.target, model_cfg.sample_rate, model_cfg.audio_length)
-
     src_feats = extract_features(src_wav, dummy_dataset)
-    tgt_feats = extract_features(tgt_wav, dummy_dataset)
 
     def to_batch(t):
         return t.unsqueeze(0).to(device)
 
-    output_audio = model.transfer(
-        source_mfcc=to_batch(src_feats["mfcc"]),
-        source_f0=to_batch(src_feats["f0"]),
-        source_loudness=to_batch(src_feats["loudness"]),
-        target_mfcc=to_batch(tgt_feats["mfcc"]),
-    )  # [1, audio_length]
+    if args.mode == "reconstruct":
+        outputs = model(
+            to_batch(src_feats["mfcc"]),
+            to_batch(src_feats["f0"]),
+            to_batch(src_feats["loudness"]),
+            grl_lambda=0.0,
+        )
+        output_audio = outputs["audio"]  # [1, audio_length]
+    else:
+        if args.target is None:
+            raise ValueError("--target is required for transfer mode")
+        tgt_wav = load_audio(args.target, model_cfg.sample_rate, model_cfg.audio_length)
+        tgt_feats = extract_features(tgt_wav, dummy_dataset)
+        output_audio = model.transfer(
+            source_mfcc=to_batch(src_feats["mfcc"]),
+            source_f0=to_batch(src_feats["f0"]),
+            source_loudness=to_batch(src_feats["loudness"]),
+            target_mfcc=to_batch(tgt_feats["mfcc"]),
+        )  # [1, audio_length]
 
     output_audio = output_audio.squeeze(0).cpu()
     output_audio = output_audio / (output_audio.abs().max() + 1e-8)   # peak normalise
@@ -107,7 +117,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--source", type=str, required=True, help="Source instrument audio")
-    parser.add_argument("--target", type=str, required=True, help="Target instrument audio")
+    parser.add_argument("--target", type=str, default=None, help="Target instrument audio (transfer mode only)")
     parser.add_argument("--output", type=str, default="output.wav")
+    parser.add_argument("--mode", type=str, default="transfer", choices=["transfer", "reconstruct"],
+                        help="transfer: swap timbre; reconstruct: encode+decode source only")
     args = parser.parse_args()
     transfer(args)

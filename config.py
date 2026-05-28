@@ -65,5 +65,12 @@ class TrainConfig:
     instrument_families: list = dataclasses.field(
         default_factory=lambda: ["bass", "keyboard", "guitar"]
     )
+    instrument_source_map: dict = dataclasses.field(
+        default_factory=lambda: {
+            "bass": "electronic",
+            "guitar": "acoustic",
+            "keyboard": "electronic",
+        }
+    )
     max_per_family: int = 1500      # max examples per instrument family (None = no limit)
     dataset_seed: int = 42          # random seed for family subsampling
