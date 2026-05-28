@@ -26,7 +26,7 @@ class ModelConfig:
     timbre_d_t: int = 256              # D_t
 
     # GRL
-    grl_lambda_max: float = 1.0
+    grl_lambda_max: float = 0.5
     n_instruments: int = 11            # NSynth instrument families; overridden at runtime from dataset
 
     # Decoder MLP hidden dim
