@@ -91,8 +91,13 @@ class DDSPDecoder(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         B, T, _ = f0.shape
 
-        f0_emb = self.f0_mlp(f0)                                    # [B, T, mlp_units]
-        loud_emb = self.loud_mlp(loudness)                           # [B, T, mlp_units]
+        # Normalize before MLPs to avoid LayerNorm collapse on single-scalar inputs.
+        # f0 stays in Hz for the synthesizer; only the MLP embedding uses log2 scale.
+        f0_norm = torch.log2(f0 / 440.0 + 1e-7)     # Hz → log2 re 440 Hz,  ≈ [-3, 2]
+        loudness_norm = loudness / 50.0              # dB → roughly [-2, 0]
+
+        f0_emb = self.f0_mlp(f0_norm)                               # [B, T, mlp_units]
+        loud_emb = self.loud_mlp(loudness_norm)                      # [B, T, mlp_units]
         z_emb = self.z_mlp(z)                                        # [B, T, mlp_units]
 
         h_t_exp = h_t.unsqueeze(1).expand(-1, T, -1)                # [B, T, D_t]

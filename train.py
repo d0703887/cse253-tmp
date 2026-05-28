@@ -45,7 +45,6 @@ def train(args):
         audio_length=model_cfg.audio_length,
         frame_rate=model_cfg.frame_rate,
         n_mfcc=model_cfg.n_mfcc,
-        use_crepe=args.use_crepe,
         instrument_families=families,
     )
     model_cfg.n_instruments = len(train_dataset.instrument_to_idx)
@@ -68,7 +67,6 @@ def train(args):
             audio_length=model_cfg.audio_length,
             frame_rate=model_cfg.frame_rate,
             n_mfcc=model_cfg.n_mfcc,
-            use_crepe=args.use_crepe,
             instrument_to_idx=train_dataset.instrument_to_idx,
             instrument_families=families,
         )
@@ -209,7 +207,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True, help="Path to NSynth train split")
     parser.add_argument("--val_dir", type=str, default=None, help="Path to NSynth valid split")
-    parser.add_argument("--use_crepe", action="store_true", help="Use CREPE for f0 extraction")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument(
         "--families", type=str, default=None,
