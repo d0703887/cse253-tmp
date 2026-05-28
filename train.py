@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from config import ModelConfig, TrainConfig
 from dataset import NSynthDataset

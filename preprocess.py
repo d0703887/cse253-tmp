@@ -17,7 +17,7 @@ from pathlib import Path
 import torch
 import torchaudio
 import torchaudio.transforms as T
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from config import ModelConfig, TrainConfig
 from dataset import compute_loudness, _a_weighting

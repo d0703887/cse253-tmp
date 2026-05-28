@@ -16,7 +16,7 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from config import ModelConfig, TrainConfig
 
