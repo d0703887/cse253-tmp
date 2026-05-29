@@ -54,12 +54,12 @@ class ModelConfig:
 class TrainConfig:
     batch_size: int = 16
     learning_rate: float = 3e-4
-    n_epochs: int = 100
+    n_epochs: int = 200
     warmup_steps: int = 1000
     grl_ramp_steps: int = 10000       # steps to ramp lambda from 0 to lambda_max
     grad_clip: float = 1.0
     log_interval: int = 100
-    save_interval: int = 1000
+    save_interval: int = 5000
     checkpoint_dir: str = "checkpoints"
     nsynth_data_dir: str = "data/nsynth"
     instrument_families: list = dataclasses.field(
