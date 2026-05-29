@@ -72,7 +72,7 @@ def _process_one(args_tuple):
             waveform.unsqueeze(0),
             sample_rate,
             hop_length=hop,
-            fmin=50.0,
+            fmin=20.0,
             fmax=2000.0,
             model="tiny",
             return_periodicity=True,
